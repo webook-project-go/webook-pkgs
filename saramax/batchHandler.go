@@ -3,7 +3,6 @@ package saramax
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"github.com/IBM/sarama"
 	"github.com/webook-project-go/webook-pkgs/logger"
 	"time"
@@ -37,10 +36,10 @@ func (b *BatchHandler[T]) ConsumeClaim(session sarama.ConsumerGroupSession, clai
 	msgCh := claim.Messages()
 	for {
 		ctx, cancel := context.WithTimeout(context.Background(), b.TimeOut)
-		done := false
 		msgs := make([]*sarama.ConsumerMessage, 0, b.BatchSize)
 		data := make([]T, 0, b.BatchSize)
-		var last *sarama.ConsumerMessage
+		done := false
+
 		for i := 0; i < b.BatchSize && !done; i++ {
 			select {
 			case <-ctx.Done():
@@ -48,23 +47,30 @@ func (b *BatchHandler[T]) ConsumeClaim(session sarama.ConsumerGroupSession, clai
 			case msg, ok := <-msgCh:
 				if !ok {
 					cancel()
-					return errors.New("message chan closed")
+					return nil // 消息通道关闭，正常退出
 				}
 				var t T
 				err := json.Unmarshal(msg.Value, &t)
 				if err != nil {
-					b.l.Error("反序列化失败")
+					b.l.Error("反序列化失败", logger.Error(err))
 					continue
 				}
 				msgs = append(msgs, msg)
 				data = append(data, t)
-				last = msg
 			}
 		}
 		cancel()
-		_ = b.fn(msgs, data)
-		if last != nil {
-			session.MarkMessage(last, "")
+		if len(data) == 0 {
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+		err := b.fn(msgs, data)
+		if err != nil {
+			b.l.Error("batch processing failed", logger.Error(err))
+			continue
+		}
+		for _, msg := range msgs {
+			session.MarkMessage(msg, "")
 		}
 	}
 }
