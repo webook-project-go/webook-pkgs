@@ -66,30 +66,29 @@ func (t *TracerBuilder) BuildClient() grpc.UnaryClientInterceptor {
 func (t *TracerBuilder) inject(ctx context.Context) context.Context {
 	md, ok := metadata.FromOutgoingContext(ctx)
 	if !ok {
-		md = metadata.New(make(map[string]string))
+		md = metadata.MD{}
 	}
-	carrier := GrpcMD(md)
-	t.propagator.Inject(ctx, &carrier)
+	t.propagator.Inject(ctx, GrpcMD(md))
 	return metadata.NewOutgoingContext(ctx, md)
 }
 
 type GrpcMD metadata.MD
 
-func (g *GrpcMD) Get(key string) string {
-	val := metadata.MD(*g).Get(key)
+func (g GrpcMD) Get(key string) string {
+	val := metadata.MD(g).Get(key)
 	if len(val) > 0 {
 		return val[0]
 	}
 	return ""
 }
 
-func (g *GrpcMD) Set(key string, value string) {
-	metadata.MD(*g).Set(key, value)
+func (g GrpcMD) Set(key string, value string) {
+	metadata.MD(g).Set(key, value)
 }
 
-func (g *GrpcMD) Keys() []string {
-	keys := make([]string, 0, len(*g))
-	for key, _ := range metadata.MD(*g) {
+func (g GrpcMD) Keys() []string {
+	keys := make([]string, 0, len(g))
+	for key := range metadata.MD(g) {
 		keys = append(keys, key)
 	}
 	return keys
@@ -98,8 +97,7 @@ func (g *GrpcMD) Keys() []string {
 func (t *TracerBuilder) extract(ctx context.Context) context.Context {
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
-		md = metadata.New(make(map[string]string))
+		md = metadata.MD{}
 	}
-	carrier := GrpcMD(md)
-	return t.propagator.Extract(ctx, &carrier)
+	return t.propagator.Extract(ctx, GrpcMD(md))
 }
