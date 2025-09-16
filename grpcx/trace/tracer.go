@@ -2,6 +2,7 @@ package trace
 
 import (
 	"context"
+	"fmt"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
@@ -23,6 +24,9 @@ func (t *TracerBuilder) BuildServer() grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp any, err error) {
 		ctx = t.extract(ctx)
 		ctx, span := t.tracer.Start(ctx, info.FullMethod)
+		spanCtx := trace.SpanContextFromContext(ctx)
+		fmt.Println("TraceID:", spanCtx.TraceID())
+
 		defer span.End()
 		attrs := []attribute.KeyValue{
 			semconv.RPCSystemKey.String("GRPC"),
@@ -46,6 +50,9 @@ func (t *TracerBuilder) BuildClient() grpc.UnaryClientInterceptor {
 	return func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
 		ctx = t.inject(ctx)
 		ctx, span := t.tracer.Start(ctx, method)
+		spanCtx := trace.SpanContextFromContext(ctx)
+		fmt.Println("TraceID:", spanCtx.TraceID())
+
 		defer span.End()
 		attrs := []attribute.KeyValue{
 			attribute.Key("rpc.grpc.kind").String("unary"),
@@ -66,30 +73,33 @@ func (t *TracerBuilder) BuildClient() grpc.UnaryClientInterceptor {
 func (t *TracerBuilder) inject(ctx context.Context) context.Context {
 	md, ok := metadata.FromOutgoingContext(ctx)
 	if !ok {
-		md = metadata.MD{}
+		md = metadata.New(nil)
 	}
-	t.propagator.Inject(ctx, GrpcMD(md))
-	return metadata.NewOutgoingContext(ctx, md)
+	carrier := &GrpcMD{md: md}
+	t.propagator.Inject(ctx, carrier)
+	return metadata.NewOutgoingContext(ctx, carrier.md)
 }
 
-type GrpcMD metadata.MD
+type GrpcMD struct {
+	md metadata.MD
+}
 
-func (g GrpcMD) Get(key string) string {
-	val := metadata.MD(g).Get(key)
+func (g *GrpcMD) Get(key string) string {
+	val := g.md.Get(key)
 	if len(val) > 0 {
 		return val[0]
 	}
 	return ""
 }
 
-func (g GrpcMD) Set(key string, value string) {
-	metadata.MD(g).Set(key, value)
+func (g *GrpcMD) Set(key string, value string) {
+	g.md[key] = append(g.md[key], value)
 }
 
-func (g GrpcMD) Keys() []string {
-	keys := make([]string, 0, len(g))
-	for key := range metadata.MD(g) {
-		keys = append(keys, key)
+func (g *GrpcMD) Keys() []string {
+	keys := make([]string, 0, len(g.md))
+	for k := range g.md {
+		keys = append(keys, k)
 	}
 	return keys
 }
@@ -97,7 +107,8 @@ func (g GrpcMD) Keys() []string {
 func (t *TracerBuilder) extract(ctx context.Context) context.Context {
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
-		md = metadata.MD{}
+		md = metadata.New(nil)
 	}
-	return t.propagator.Extract(ctx, GrpcMD(md))
+	carrier := &GrpcMD{md: md}
+	return t.propagator.Extract(ctx, carrier)
 }

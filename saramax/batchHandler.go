@@ -61,16 +61,17 @@ func (b *BatchHandler[T]) ConsumeClaim(session sarama.ConsumerGroupSession, clai
 		}
 		cancel()
 		if len(data) == 0 {
-			time.Sleep(100 * time.Millisecond)
+			time.Sleep(1 * time.Millisecond)
 			continue
 		}
-		err := b.fn(msgs, data)
-		if err != nil {
-			b.l.Error("batch processing failed", logger.Error(err))
-			continue
-		}
-		for _, msg := range msgs {
-			session.MarkMessage(msg, "")
-		}
+		go func() {
+			err := b.fn(msgs, data)
+			if err != nil {
+				b.l.Error("batch processing failed", logger.Error(err))
+			}
+			for _, msg := range msgs {
+				session.MarkMessage(msg, "")
+			}
+		}()
 	}
 }
